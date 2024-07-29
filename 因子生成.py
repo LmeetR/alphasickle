@@ -16,6 +16,7 @@ gen = FactorGenerater()
 def create_factor_file(date):
     sname = str(date)[:10]
     try:
+        # 计算所有的指标，保存到dataframe中，并且保存文件
         gen.create_factor_file(date, os.path.join(WORK_PATH, "factors", f"{sname}.csv"))
     except FileAlreadyExistError:
         print(f"{sname}'s data already exists.")
@@ -28,10 +29,14 @@ def main():
     e = pd.to_datetime('20191130')
     dates = pd.Series(dates, index=dates)
     dates = dates[(dates>=s)&(dates<=e)]
+
+    # 注意并行的方式生成因子
     #串行
     #for date in dates:
     #    create_factor_file(date)
     #并行
+
+    # 为所有日期生成所有的因子，保存到dataframe中，并且保存文件
     function_list = [delayed(create_factor_file)(date) for date in dates]
     Parallel(n_jobs=5, backend='multiprocessing')(function_list) #并行化处理
 

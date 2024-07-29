@@ -129,6 +129,8 @@ def winsorize(data, n=5):
     facs_to_win = datdf.columns.difference(set(info_cols)).difference(set(tuple(facs_to_remove))) #去掉基准列和要被删除的因子列
     dat_win = datdf[facs_to_win]
     fac_vals = dat_win.values
+    # 求中位数， np.nanmedian会忽略掉nan
+    # 下面就是5倍中位数法
     dm = np.nanmedian(fac_vals, axis=0)
     dm1 = np.nanmedian(np.abs(fac_vals - dm), axis=0)
     dm = np.repeat(dm.reshape(1,-1), fac_vals.shape[0], axis=0)
@@ -149,14 +151,24 @@ def neutralize(data, ind='zx'):
     y = datdf[cols_to_neu]
     y = y.dropna(how='any', axis=1) #存在空值的因子就不处理
     cols_neu = y.columns
+    # 流通市值
     lncap = np.log(datdf[['MKT_CAP_FLOAT']])
+    # 中信行业哑变量
     ind_dummy_matrix = pd.get_dummies(datdf[f'industry_{ind}'])
+
+    # 合并数据， column方向合并
     X = pd.concat([lncap, ind_dummy_matrix], axis=1)
     model = LinearRegression(fit_intercept=False)
     res = model.fit(X, y)
+
+    # 获取系数矩阵
     coef = res.coef_
+
+    # y - X*coef = 残差
     residue = y - np.dot(X, coef.T)
     assert len(datdf.index.difference(residue.index)) == 0
+
+    # 把残差设置到每个因子列上
     datdf.loc[residue.index, cols_neu] = residue
     return datdf
 
@@ -190,6 +202,7 @@ def plot_factor_data(show_path, sub_type, name, datdf):
     plt.figure(figsize=(32, 36))
     for i, factor in zip(range(len(facs)), facs):
         plt.subplot(9,9,i+1)
+        # 绘制hist直方图
         sns.distplot(datdf[factor].fillna(0).values)
         plt.title(factor)
     plt.suptitle(f'{sub_type}-{name}')
@@ -198,6 +211,13 @@ def plot_factor_data(show_path, sub_type, name, datdf):
     #plt.clf() #清除当前figure的所有axes,但是不关闭这个window,所以能继续复用于其他的plot
     plt.close('all') #关闭window,如果没有指定,则指当前window
 
+# 该函数用于检查给定因素数据的质量，并将检查结果保存到指定路径。具体功能如下：
+# 1. 根据传入的路径和子目录名称创建保存结果的目录。
+# 2. 读取指定路径下的所有因子数据文件，并按文件名的时间顺序处理。
+# 3. 对每个文件中的因素数据进行缺失值和零值统计，分别计算每个因素的缺失值比例和零值比例。
+# 4. 将缺失值和零值统计结果保存到CSV文件中，文件名为“缺失值统计.csv”和“零值统计.csv”。
+# 5. 如果传入了usable_factor_stat参数为True，则统计所有因子在所有截面期上是否有取值，
+# 6. 将只有在所有截面期所有股票上都有取值的因素保存到CSV文件中，文件名为“可用因子统计.csv”。
 def factor_data_quality_check(factors_path, factor_names, save_path, sub_dir_name, usable_factor_stat=False):
     save_path = os.path.join(save_path, sub_dir_name)
     if not os.path.exists(save_path):
@@ -213,6 +233,8 @@ def factor_data_quality_check(factors_path, factor_names, save_path, sub_dir_nam
         datdf, _ = get_factor_data(data, factor_names)
         facs = datdf.columns.difference(set(info_cols)) #排除掉一些基准列
         datdf = datdf[facs]
+
+        # 计算null的因子和0值的因子百分比
         null_stat = pd.isnull(datdf).sum() / len(datdf) #True为1,False为0
         zero_stat = (datdf==0).sum() / len(datdf) #True为1,False为0
         if (df_null_stat is None):
@@ -231,6 +253,7 @@ def factor_data_quality_check(factors_path, factor_names, save_path, sub_dir_nam
     df_zero_stat.to_csv(os.path.join(save_path, "零值统计.csv"), encoding='gbk')
     #
     if usable_factor_stat:
+        # lambda 2个参数
         r = reduce(lambda left,right:left|right, l_usable_factor_stat)
         r = r[~r]
         r[:] = np.nan
@@ -285,6 +308,20 @@ def plot_industry_comparison(factor_name, plot_data):
     plt.clf() #清除当前figure的所有axes,但是不关闭这个window,所以能继续复用于其他的plot
     plt.close('all') #关闭window,如果没有指定,则指当前window
 
+# 该函数用于将截面格式的数据转换为矩阵格式，并对每个因子进行行业分类比较。
+# 将给定的panel_path路径下的第一个文件转换为DataFrame格式，并保存为data。
+# 通过调用get_factor_data函数，将data处理得到datdf和info_cols。
+# 通过fac = datdf.columns.difference(set(info_cols))，将info_cols从datdf的列中排除，得到facs。
+# 调用panel_to_matrix函数，将facs从panel_path路径转换为matrix_path路径下的矩阵格式。
+# 读取matrix_path路径下的'industry_zx.csv'文件，将其转换为DataFrame格式，并保存为industry_citic。
+# 对于每个因子fac，将其列名替换为fac.replace('/', 'div')，并读取matrix_path路径下对应的csv文件，将其转换为DataFrame格式，并保存为datdf。
+# 按照datdf的列（日期）进行循环，对每个日期，创建一个DataFrame格式的df。
+# 将df的'factor'列设置为datdf[dt]，将df的'industry'列设置为industry_citic[dt]。
+# 通过df.dropna()删除df中的空值。
+# 将df按'industry'列进行分组，并计算每组'factor'列的平均值，将结果保存到r_df的对应日期列中。
+# 通过r_df.mean(axis=1)计算r_df每行的平均值，并将结果转换为DataFrame格式，保存为r_df，并将列名设置为fac。
+# 调用plot_industry_comparison函数，对fac和r_df进行行业比较的绘图。
+# 打印fac。
 def factor_industry_comparison(panel_path, matrix_path, sub_dir_name):
     #截面格式转换成矩阵格式
     matrix_path = os.path.join(matrix_path, sub_dir_name)

@@ -17,11 +17,14 @@ from functools import reduce
 from itertools import dropwhile
 warnings.filterwarnings('ignore')
 
+# 保存数据文件的路径,
+# __file__ 表示当前文件的绝对路径, 然后用 os.path.dirname 获取当前文件的上一级目录
 WORK_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "raw_data")
 
 class FileAlreadyExistError(Exception):
     pass
 
+# 装饰器，用于懒加载， 使用类的方式实现装饰器
 class lazyproperty:
     def __init__(self, func):
         self.func = func
@@ -142,10 +145,13 @@ class Data:
         self.__update_frepmap()
 
     def __update_frepmap(self):
+        # 从数据文件的根路径下，获取所有文件名，并更新 freqmap
         self.freqmap.update({name.split(".")[0]: self.root for name in os.listdir(self.root)})
 
     def open_file(self, name):
         if name == 'meta':
+            # 其中， index_col表示读取第一列作为索引
+            # parse_dates表示需要转换成日期的列
             return pd.read_excel(os.path.join(self.root, 'src', self.metafile), index_col=[0], parse_dates=['ipo_date', "delist_date"], encoding='gbk')
         elif name == 'month_map':
             return pd.read_excel(os.path.join(self.root, 'src', self.mmapfile), index_col=[0], parse_dates=[0, 1], encoding='gbk')['calendar_date']
@@ -160,10 +166,14 @@ class Data:
             raise Exception(f'{name} is unrecognisable or not in file dir, please check and retry.')
         try:
             dat = pd.read_csv(os.path.join(path, name+'.csv'), index_col=[0], engine='python', encoding='gbk')
+            # 其中 dat.index.union 表示将meta的index与dat的index合并（交集）
+            # 这样的话，就是确保dat的index与meta的index完全一致
             dat = pd.DataFrame(data=dat, index=dat.index.union(self.meta.index), columns=dat.columns)
         except TypeError:
             print(name, path)
             raise
+
+        # 其中pd.to_datetime表示将dat的列名转换为pandas日期索引格式
         dat.columns = pd.to_datetime(dat.columns)
         #if name in ('stm_issuingdate', 'applied_rpt_date_M'):
         #    dat = dat.replace('0', np.nan)
@@ -171,6 +181,10 @@ class Data:
         return dat
 
     def close_file(self, df, name, **kwargs):
+        # 根据各种类别保存dataframe文件
+        # 默认保存到src文件夹下
+        # 前4种类型，保存为4个excel文件
+        # 最后一个分支是用来保存各种指标csv df的
         if name == 'meta':
             df.to_excel(os.path.join(self.root, 'src', self.metafile), encoding='gbk', **kwargs)
         elif name == 'month_map':
@@ -180,12 +194,17 @@ class Data:
         elif name == 'tradedays':
             df.to_excel(os.path.join(self.root, 'src', self.tradedays_file), encoding='gbk', **kwargs)
         else:
+            # 如果文件的路径不存在，则设置为数据文件的根路径
             path = self.freqmap.get(name, None)
             if path is None:
                 path = self.root
             #if name in ['stm_issuingdate', 'applied_rpt_date_M']:
             #    df = df.replace(0, pd.NaT)
+
+            # 保存指标的数据文件
             df.to_csv(os.path.join(path, name+'.csv'), encoding='gbk', **kwargs)
+
+            # 更新 freqmap
             self.__update_frepmap()
         self.__update_attr(name)
 
@@ -199,11 +218,20 @@ class Data:
 #                series.loc[start_valid_idx:] = series.loc[start_valid_idx:].fillna(0)
 #        return series
 
+    # 用于更新对象的属性。它首先检查属性名是否在对象的__dict__中，如果是，则删除该属性。
+    # 然后，使用getattr函数获取该属性的当前值（如果存在），并将其赋值给该属性
     def __update_attr(self, name):
         if name in self.__dict__:
             del self.__dict__[name]
         self.__dict__[name] = getattr(self, name, None)
 
+    # 这个函数是一个类的特殊方法__getattr__，它用于动态地获取类中不存在的属性。
+    # 当尝试访问类中不存在的属性时，Python会调用这个方法。
+    # 在这个函数中，首先检查属性是否在类的__dict__中，如果不存在，
+    # 则通过调用self.open_file(name)方法来创建并存储该属性，最后返回这个属性。
+    # 这样可以实现一种懒加载机制，只有在第一次访问属性时才创建它。
+
+    # 也就是访问一个指标的属性的时候，自动从对应的excel/csv中获取到dataframe
     def __getattr__(self, name):
         if name not in self.__dict__:
             self.__dict__[name] = self.open_file(name)
@@ -217,6 +245,7 @@ class FactorGenerater:
             self.dates_m = sorted(self.pct_chg_M.columns)
 
     def __getattr__(self, name):
+        # 系统方法，从一个对象上获取属性
         return getattr(self.data, name, None)
 
     def _get_trade_days(self, startday, endday, freq=None):

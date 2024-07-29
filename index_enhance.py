@@ -453,6 +453,8 @@ def get_est_stock_return(factors, factors_panel, est_factor_rets, window=12, hal
         cur_factor_panel = factors_panel[date] #date期因子值(因子暴露,因子载荷)
         cur_factor_panel = cur_factor_panel[factors]
         cur_factor_panel = cur_factor_panel.dropna(how='any', axis=0)
+
+        # 预测t+1期的股票收益率，
         cur_est_stock_rets = np.dot(cur_factor_panel, est_factor_rets.loc[date]) #参数: date期因子值, date+1期的[因子预测收益率]
         #实际内容是date+1期的股票预期收益率
         cur_est_stock_rets = pd.DataFrame(cur_est_stock_rets, index=cur_factor_panel.index, columns=[date])
@@ -547,6 +549,19 @@ def linear_programming(data_dict):
     stock_wt = stock_wt.where(stock_wt != 0, np.nan)
     return stock_wt
 
+# 该函数实现了分层抽样的方法来求解组合最优权重。具体步骤如下：
+# 将输入的数据字典转换为数据面板（data_panel）。
+# 创建一个空的DataFrame（stock_wt）来存储结果。
+# 遍历数据面板的每个日期：
+# 如果该日期没有'est_stock_rets'列，则跳过。
+# 去除该日期面板中的缺失值。
+# 对于每个行业（industry_zx）：
+# 如果该行业的股票数量小于等于3，则将该行业的权重直接添加到panel_stkwt中。
+# 否则，根据股票数量的余数来确定分层的切割点。
+# 对于每个分层，找到估计股票收益最高的股票，并将其权重设置为该分层中所有股票的权重之和。
+# 将每个分层的权重添加到panel_stkwt中。
+# 将panel_stkwt按照日期进行重命名，并将其添加到stock_wt中。
+# 返回最终的权重DataFrame（stock_wt）。
 def stratified_sample(data_dict):
     """
     分层抽样法-求解组合最优权重
@@ -574,8 +589,11 @@ def stratified_sample(data_dict):
                     cut1, cut2 = num + 1, 2 * num + 2
                 else:
                     cut1, cut2 = num, 2 * num
+
+                # 分成3组
                 df1, df2, df3 = df.iloc[:cut1, :], df.iloc[cut1:cut2, :], df.iloc[cut2:, :]
                 for mkt_cap_group in [df1, df2, df3]:
+                    # 对于每个分组， 找到组内最大的收益率的股票
                     max_code_idx = np.argmax(mkt_cap_group['est_stock_rets'])
                     cur_ind_wt = mkt_cap_group.loc[[max_code_idx], 'index_wt']
                     cur_ind_wt.loc[:] = np.sum(mkt_cap_group['index_wt'])
@@ -685,7 +703,7 @@ def index_enhance_model(method='l', benchmark='000300.SH', start_date=None, end_
 
     #将alpha因子整理为截面形式
     factors_panel = concat_factors_panel(None, factors_dict, mut_codes)
-    #利用
+    # 利用历史因子的收益率预测下一期的期初的股票权重
     est_fac_rets = factor_return_forecast(factors, factors_panel, window, half_life) #因子收益率预测
     est_fac_rets = est_fac_rets[factors]
     est_stock_rets = get_est_stock_return(factors, factors_panel, est_fac_rets, window, half_life) #计算股票预期收益率

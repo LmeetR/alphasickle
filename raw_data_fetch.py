@@ -37,6 +37,7 @@ class RawDataFetcher(FactorGenerater):
         else:
             return date + toffsets.MonthEnd(n=1)
 
+    # @retry标记表示重试次数， 可以用来避免网络错误
     @retry(stop_max_attempt_number=500, wait_random_min=1000, wait_random_max=2000)
     def ensure_data(self, func, save_dir, start_dt='20010101', end_dt='20201231'):
         """ 确保按交易日获取数据
@@ -44,14 +45,26 @@ class RawDataFetcher(FactorGenerater):
         tmp_dir = os.path.join(self.root, save_dir)
         dl = [pd.to_datetime(name.split(".")[0]) for name in os.listdir(tmp_dir)]
         dl = sorted(dl)
+
+        # 开始时间和结束时间
         s = pd.to_datetime(start_dt)
         e = pd.to_datetime(end_dt)
+
+        # 从trade days文件中加载数据
         tdays = pd.Series(self.tradedays, index=self.tradedays)
+
+        # 获取开始和结束之间的交易日期
         tdays = tdays[(tdays>=s)&(tdays<=e)]
+
+        # 转化成list
         tdays = tdays.index.tolist()
+
+        # 遍历每个交易日期，保存每个交易日期的全部股票的日行情数据
         for tday in tdays:
             if tday in dl: continue
             t = tday.strftime("%Y%m%d")
+
+            # 用tushare获取数据
             datdf = func(t)
             path = os.path.join(tmp_dir, t+".csv")
             datdf.to_csv(path, encoding='gbk')
@@ -62,17 +75,24 @@ class RawDataFetcher(FactorGenerater):
         """ 确保按季度获取数据
         """
         tmp_dir = os.path.join(self.root, save_dir)
+
+        # 获取目录下的所有文件列表
         dl = [pd.to_datetime(name.split(".")[0]) for name in os.listdir(tmp_dir)]
         dl = sorted(dl)
         if len(dl) > 3:
             dl = dl[0:len(dl)-3] #已经存在的最后三个季度数据重新下载
         s = pd.to_datetime(start_dt)
         e = pd.to_datetime(end_dt)
+
+        # pd.data_range: 获取日期区间，频率是季度，这样遍历的时候就可以获得季度的最后一天
         qdates = pd.date_range(start=s, end=e, freq='Q')
+        # 通过这样的方式把DatetimeIndex类型转化成list
         qdates = qdates.tolist()
         for tday in qdates:
             if tday in dl: continue
             t = tday.strftime("%Y%m%d")
+
+            # 获取指定日期的财务数据
             datdf = func(period=t)
             path = os.path.join(tmp_dir, t+".csv")
             datdf.to_csv(path, encoding='gbk')
@@ -81,10 +101,13 @@ class RawDataFetcher(FactorGenerater):
     def create_indicator(self, raw_data_dir, raw_data_field, indicator_name):
         ''' 主要用于通过日频数据创建日频指标
         '''
+        # 创建指标的数据文件夹
         tmp_dir = os.path.join(self.root, raw_data_dir)
         tdays = [pd.to_datetime(f.split(".")[0]) for f in os.listdir(tmp_dir)]
         tdays = sorted(tdays)
         all_stocks_info = self.meta
+
+        # 创建空白数组
         df = pd.DataFrame(index=all_stocks_info.index, columns=tdays)
         for f in os.listdir(tmp_dir):
             tday = pd.to_datetime(f.split(".")[0])
@@ -149,7 +172,10 @@ class RawDataFetcher(FactorGenerater):
         for d in qdays: #每季度最后一天
             name = d.strftime("%Y%m%d")
             dat = pd.read_csv(os.path.join(tmp_dir, name+".csv"), index_col=['ts_code'], engine='python', encoding='gbk', parse_dates=['ann_date','end_date'])
+            # difference方法：用于计算两个 Index 对象之间的差集
             diff = dat.index.difference(all_stocks_info.index) #删除没在股票基础列表中多余的股票行
+
+            # labels参数：指定要删除的行或列的索引值
             dat = dat.drop(labels=diff)
             dat = dat[~dat.index.duplicated(keep='last')] #财务数据中同一只股票可能会有重复的记录,删除多余重复的
             del dat['Unnamed: 0']
@@ -304,10 +330,14 @@ class RawDataFetcher(FactorGenerater):
         ''' 数据预处理
         '''
         datdf = datdf.copy()
+
+        # 处理缺失值, ffill表示前后填充, bfill表示前后填充
         datdf = datdf.fillna(method='ffill', axis=1).fillna(method='bfill', axis=1)
         row_index, col_index = datdf.index, datdf.columns
         liststatus = self.listday_matrix.loc[row_index, col_index]
         cond = (liststatus==1)
+
+        # where函数用于将cond=false的值替换成目标值，默认是nan
         datdf = datdf.where(cond) #将不是上市日的数值替换为nan
         if suspend_days_process:
             tradestatus = self.trade_status.loc[row_index, col_index]
@@ -332,15 +362,24 @@ class TushareFetcher(RawDataFetcher):
         df_list.append(df)
         df = self.pro.stock_basic(exchange='', fields='ts_code,name,list_date,delist_date', list_status='P')
         df_list.append(df)
+        # 沿着竖轴方向拼接
         df = pd.concat(df_list)
         df = df.rename(columns={"list_date":"ipo_date"})
         df = df.rename(columns={'name':'sec_name'})
         df = df.rename(columns={"ts_code":"code"})
+
+        # 去掉重复的，其中subset=['code']表示按code列去重
+        # keep='first'表示保留第一个重复的行
         df.drop_duplicates(subset=['code'], keep='first', inplace=True)
+
+        # 按ipo_date升序排列
         df.sort_values(by=['ipo_date'], inplace=True)
         #print(pd.to_datetime(df['ipo_date']))
         #df.reset_index(drop=True, inplace=True)
+
+        # 设置code为索引
         df.set_index(['code'], inplace=True)
+
         self.close_file(df, 'meta')
 
     def fetch_trade_day(self):
@@ -368,6 +407,7 @@ class TushareFetcher(RawDataFetcher):
     #------------------------------------------------------------------------------------
     #日数据
     def daily(self, t):
+        # 用tushare获取指定交易日期的日数据
         return self.pro.daily(trade_date=t)
 
     def suspend_d(self, t):
@@ -386,6 +426,7 @@ class TushareFetcher(RawDataFetcher):
         return self.pro.moneyflow(trade_date=t)
     #------------------------------------------------------------------------------------
 
+    # 分段查询标记， 因为财务接口可能比较慢，而且有数据长度限制
     def segment_op(limit, _max):
         """ 分段获取数据
         """
@@ -396,6 +437,8 @@ class TushareFetcher(RawDataFetcher):
                 dfs = []
                 for i in range(0, _max, limit):
                     kwargs['offset'] = i
+
+                    # 调用具体函数
                     df = f(*args, **kwargs)
                     if len(df) < limit:
                         if len(df) > 0:
@@ -403,6 +446,8 @@ class TushareFetcher(RawDataFetcher):
                         break
                     df = df.iloc[0:limit]
                     dfs.append(df)
+
+                # 分段合并数据，按照index方向
                 df = pd.concat(dfs, ignore_index=True)
                 return df
             #
@@ -635,16 +680,28 @@ class TushareFetcher(RawDataFetcher):
         all_stocks_info = self.meta
         trade_days = self.tradedays
 
+        # 这个函数就是用来填充一个空白的dataframe的值的
+        # 空白dataframe的结构， index是股票列表， columns是交易日期
+        # 值是是否对应交易日期，股票是上市的
         def if_listed(series):
+            # nonlocal表示非局部变量
             nonlocal all_stocks_info
             code = series.name
+            # at 函数：通过行名和列名来取值（取行名为a, 列名为A的值）
+            # iat 函数：通过行号和列号来取值（取第1行，第1列的值）
             ipo_date = all_stocks_info.at[code, 'ipo_date']
+
+            # 退市日期
             delist_date = all_stocks_info.at[code, 'delist_date']
             daterange = series.index
+
+            # 如果没有退市日期，则对于每个上市日期之后的日期都给1
             if delist_date is pd.NaT:
+                # np.where 函数：返回一个数组，数组中每个元素根据条件判断是0还是1
                 res = np.where(daterange >= ipo_date, 1, 0)
             else:
                 res = np.where(daterange < ipo_date, 0, np.where(daterange <= delist_date, 1, 0))
+
             return pd.Series(res, index=series.index)
 
         listday_dat = pd.DataFrame(index=all_stocks_info.index, columns=trade_days)
