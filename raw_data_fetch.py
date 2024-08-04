@@ -289,12 +289,17 @@ class RawDataFetcher(FactorGenerater):
         e = pd.to_datetime('20201231') #统计周期结束
         tdays_be_month = self.trade_days_begin_end_of_month
         tdays_be_month = tdays_be_month[(tdays_be_month>=s)&(tdays_be_month<=e)].dropna(how='all')
+
+        # 区间的每个月的最后一天
         months_end = tdays_be_month.index
         hfq_close = self.hfq_close
         #***pct_chg_M
+        # 计算股票的月收益率
         pct_chg_M = pd.DataFrame()
         for m_end_date in months_end:
+            # 获取当前月份的开始和结束日期
             m_start_date = tdays_be_month.loc[m_end_date].values[0]
+            # 计算当前月份的收益率
             pct_chg_M[self.month_map.loc[m_end_date]] = hfq_close[m_end_date] / hfq_close[m_start_date] - 1
         self.close_file(pct_chg_M, 'pct_chg_M')
         #pct_chg_Nm

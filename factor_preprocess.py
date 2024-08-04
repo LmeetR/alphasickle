@@ -148,6 +148,8 @@ def neutralize(data, ind='zx'):
     global info_cols
     datdf = data.copy()
     cols_to_neu = datdf.columns.difference(set(info_cols))
+
+    # y(截面数据=因子值矩阵) = a * 行业哑变量 + b * 对数流通市值 + 残差(e)
     y = datdf[cols_to_neu]
     y = y.dropna(how='any', axis=1) #存在空值的因子就不处理
     cols_neu = y.columns

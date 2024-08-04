@@ -74,6 +74,8 @@ def get_factor_corr(factors=None, codes=None):
     factors_matrix_dat = get_factor(factors)
     factors_panel_dat = concat_factors_panel(factors, factors_matrix_dat, codes, False, False)
     corrs = []
+
+    # 遍历每个日期
     for date in sorted(factors_panel_dat.keys()):
         factor_panel = factors_panel_dat[date]
         corrs.append(factor_panel.corr())
@@ -165,6 +167,7 @@ def factor_concat(factors_to_concat, new_factor_name, weight=None):
     for f in os.listdir(factor_panel_path):
         dat = pd.read_csv(os.path.join(factor_panel_path, f), encoding='gbk', engine='python', index_col=[0])
         factor_dat = dat[factors_to_concat]
+        # 因为列是每个因子的名字，所以这个地方要按照权重按照列的方向求和
         factor_concated = factor_dat.apply(apply_func, axis=1)
         factor_concated.name = col_name
         if panelfactors: #判断目标文件是否存在,存在就只需更新内容,故意不写成 if f in panelfactors,为了就是能提早发现错误
@@ -203,16 +206,20 @@ def orthogonalize(factors_y, factors_x, codes=None, index_wt=None):
     if len(factors_y) == 0:
         return
 
+    # panel，每个日期、每个股票的因子值、可能包含industry的dummy值或者marketcap
     panel_y = concat_factors_panel(factors_y, codes=codes, ind=False, mktcap=False)
     panel_x = concat_factors_panel(factors_x, codes=codes, ind=False, mktcap=False)
 
     ortho_y = {}
+
+    # 遍历每一天
     for date in sorted(panel_x.keys()):
         y = panel_y[date]
         X = panel_x[date]
         cur_index_wt = index_wt[date].dropna()
 
         data_to_regress = pd.concat([X, y], axis=1)
+        # index_wt 是指数成分股的权重
         mut_index = data_to_regress.index.intersection(cur_index_wt.index)
         data_to_regress = data_to_regress.loc[mut_index, :]
         data_to_regress = data_to_regress.dropna(how='any', axis=0)
@@ -221,11 +228,17 @@ def orthogonalize(factors_y, factors_x, codes=None, index_wt=None):
 
         resids = pd.DataFrame()
         #params_a = pd.DataFrame()
+
+        # 遍历每个需要正交的因子
         for fac in ys.columns:
             y = ys[fac]
+
+            # 和x做回归，注意，为了正交，所以不要截距项
             _, params, resid_y = regress(y, X, intercept=True)
             #params_a = pd.concat([params_a, params], axis=1)
             resid_y.name = fac + '_ortho'
+
+            # 残差作为正交之后的因子
             resids = pd.concat([resids, resid_y], axis=1)
         ortho_y[date] = resids
 
@@ -345,6 +358,9 @@ def concat_factors_panel(factors=None, factors_dict=None, codes=None, ind=True, 
         factors_dict = {fac: datdf.loc[codes,:] for fac, datdf in factors_dict.items()}
 
     if (factors_dict is None) or ('MKT_CAP_FLOAT' in factors) or (f'industry_{industry_benchmark}' in factors):
+        # 遍历每个需要处理的因子，获取因子的矩阵
+        # matrix的key = 因子名字
+        # value = 因子值的panel/df
         matrix = {}
         for fac in factors:
             fpath = get_factor_path(fac)
@@ -354,6 +370,8 @@ def concat_factors_panel(factors=None, factors_dict=None, codes=None, ind=True, 
     else:
         matrix = factors_dict
 
+    # panel 的key = 时间
+    # value = 截面数据（具体某个时间）的因子值
     panel = defaultdict(pd.DataFrame)
 
     #对每个时间截面，合并因子数据
@@ -400,7 +418,9 @@ def factor_return_forecast(factors_x, factor_data=None, window=12, half_life=6):
     factor_rets = pd.DataFrame()
     for date in sorted(panel_x.keys()):
         y = ret_matrix[date] #下期(期末)股票收益率
-        X = panel_x[date]    #当期(期末)因子值(因子暴露,因子载荷),也就是下期期初的值
+        X = panel_x[date]    #当期(期末)因子值(因子暴露,因子载荷),也就是下期期初的值 （重点）
+
+        # 成分股的权重
         cur_index_wt = index_wt[date].dropna()
 
         data_to_regress = pd.concat([X, y], axis=1)
@@ -449,7 +469,10 @@ def get_est_stock_return(factors, factors_panel, est_factor_rets, window=12, hal
     根据之前预测的[因子预测收益率],计算得到各股票的截面预期(预测)收益
     """
     est_stock_rets = pd.DataFrame()
+
+    # 遍历[因子预测收益率]的每一期
     for date in est_factor_rets.index:
+        # 获取指定日期股票的因子暴露
         cur_factor_panel = factors_panel[date] #date期因子值(因子暴露,因子载荷)
         cur_factor_panel = cur_factor_panel[factors]
         cur_factor_panel = cur_factor_panel.dropna(how='any', axis=0)
@@ -457,7 +480,11 @@ def get_est_stock_return(factors, factors_panel, est_factor_rets, window=12, hal
         # 预测t+1期的股票收益率，
         cur_est_stock_rets = np.dot(cur_factor_panel, est_factor_rets.loc[date]) #参数: date期因子值, date+1期的[因子预测收益率]
         #实际内容是date+1期的股票预期收益率
+
+        # 填充[date]时刻的各个股票的预测收益率
         cur_est_stock_rets = pd.DataFrame(cur_est_stock_rets, index=cur_factor_panel.index, columns=[date])
+
+        # 拼接
         est_stock_rets = pd.concat([est_stock_rets, cur_est_stock_rets], axis=1)
     return est_stock_rets #重点:每个存储单元包含的是对应日期的下一期的股票预期收益率
 
@@ -510,29 +537,60 @@ def lp_solve(cur_est_rets, limit_factors, cur_benchmark_wt, num_multi=5):
     输入：截面预期收益，约束条件（风险因子），截面标的指数成分股权重，个股权重约束倍数
     输出：经优化后的组合内个股权重
     """
+    # 将输入数据合并为一个DataFrame，便于后续处理
     data = pd.concat([cur_est_rets, limit_factors, cur_benchmark_wt], axis=1)
+    # 删除任何包含NaN值的行，确保数据完整性
     data = data.dropna(how='any', axis=0)
+    # 重新分配合并后的数据为原始变量，便于后续处理
     cur_est_rets, limit_factors, cur_benchmark_wt = (data.iloc[:, 0:1], data.iloc[:, 1:-1], data.iloc[:, -1])
 
-    #****请勿改成简写形式（df /= df.sum())  错误原因待查****
+    # 标准化指数成分股权重
     cur_benchmark_wt = cur_benchmark_wt / cur_benchmark_wt.sum()
 
+    # 将预期收益转换为一维数组，以匹配优化器输入要求
     c = cur_est_rets.values.flatten()
 
+    # 定义不等式约束矩阵，此处为None，表示没有不等式约束
+    # 不等约束可以表示为 A_ub * x <= b_ub
     A_ub = None
     b_ub = None
+
+    # limit_factors：第T日的所有股票的风险因子数据
+    # cur_benchmark_wt：股票池股票的初始化权重
+
+    # 定义等式约束矩阵，包括风险因子约束和总权重等于1的约束
+    # 等式约束 A_eq * x = b_eq
+
+    # A_eq 和 b_eq 都是2部分，所以A_eq[0] * x = b_eq[0] ...
     A_eq = np.r_[limit_factors.T.values, np.repeat(1, len(limit_factors)).reshape(1, -1)]
     b_eq = np.r_[np.dot(limit_factors.T, cur_benchmark_wt), np.array([1])]
+
+    # 定义x的上界和下界
+    # 定义每个股票的权重上下界，下界为0，上界为指数成分股权重的num_multi倍
     bounds = tuple([(0, num_multi * wt_in_index) for wt_in_index in cur_benchmark_wt.values])
+    # 调用线性规划求解器进行优化
     res = linprog(-c, A_ub, b_ub, A_eq, b_eq, bounds)
 
+    # 总结一下：
+    # 令 x 是 要求解的目标，是每个股票的权重
+    # min c (股票的期初预期收益率) * x
+    # 其中:
+    # 1. 股票的风险因子 * x = 股票的风险因子 * 成分股的股票权重
+    # 2. sum(x) = 1
+    # 3. 0 <= x
+    # 4. x <= 5 * 指数成分股权重
+
+    # 将优化结果转换为Series对象，并保留原始索引
     cur_wt = pd.Series(res.x, index=cur_est_rets.index)
     return cur_wt
+
 
 def linear_programming(data_dict):
     """
     线性规划法-求解最优组合权重
     """
+
+    # 下一期股票预期收益率， 截面风险因子（每个成分股的分析因子值）， 截面基准指数成分股权重
     est_stock_rets, limit_fac_data, index_wt = data_dict['est_stock_rets'], data_dict['limit_fac_data'], data_dict['index_wt']
     stock_wt = pd.DataFrame()
     for date in est_stock_rets.columns:
@@ -549,19 +607,6 @@ def linear_programming(data_dict):
     stock_wt = stock_wt.where(stock_wt != 0, np.nan)
     return stock_wt
 
-# 该函数实现了分层抽样的方法来求解组合最优权重。具体步骤如下：
-# 将输入的数据字典转换为数据面板（data_panel）。
-# 创建一个空的DataFrame（stock_wt）来存储结果。
-# 遍历数据面板的每个日期：
-# 如果该日期没有'est_stock_rets'列，则跳过。
-# 去除该日期面板中的缺失值。
-# 对于每个行业（industry_zx）：
-# 如果该行业的股票数量小于等于3，则将该行业的权重直接添加到panel_stkwt中。
-# 否则，根据股票数量的余数来确定分层的切割点。
-# 对于每个分层，找到估计股票收益最高的股票，并将其权重设置为该分层中所有股票的权重之和。
-# 将每个分层的权重添加到panel_stkwt中。
-# 将panel_stkwt按照日期进行重命名，并将其添加到stock_wt中。
-# 返回最终的权重DataFrame（stock_wt）。
 def stratified_sample(data_dict):
     """
     分层抽样法-求解组合最优权重
@@ -569,13 +614,20 @@ def stratified_sample(data_dict):
     data_panel = concat_factors_panel(None, data_dict, None, False, False)
 
     stock_wt = pd.DataFrame()
+
+    # 遍历每个交易日
     for date in sorted(data_panel.keys()):
+
+        # 获取截面数据
         panel = data_panel[date]
         if 'est_stock_rets' not in panel.columns:
             continue
         panel = panel.dropna(how='any', axis=0)
         panel_stkwt = pd.Series()
+
+        # 遍历每个行业分组
         for name, df in panel.groupby('industry_zx'):
+            # 每个行业内的股票分3组
             num = len(df) // 3
             remainder = len(df) % 3
             if len(df) <= 3:
@@ -595,8 +647,11 @@ def stratified_sample(data_dict):
                 for mkt_cap_group in [df1, df2, df3]:
                     # 对于每个分组， 找到组内最大的收益率的股票
                     max_code_idx = np.argmax(mkt_cap_group['est_stock_rets'])
+                    # 获取组内最大收益率的股票的权重
                     cur_ind_wt = mkt_cap_group.loc[[max_code_idx], 'index_wt']
+                    # 将组内所有股票的权重设置为组内最大收益率的股票的权重
                     cur_ind_wt.loc[:] = np.sum(mkt_cap_group['index_wt'])
+                    # 将组内所有股票的权重添加到结果中
                     panel_stkwt = pd.concat([panel_stkwt, cur_ind_wt], axis=0)
         panel_stkwt.name = date
         stock_wt = pd.concat([stock_wt, panel_stkwt], axis=1)
@@ -647,6 +702,10 @@ def get_ori_name(factor_name, factors_to_concat):
         return [factor_name]
 
 def factor_process(method, factors_to_concat, factors_ortho, index_wt, mut_codes, factors, risk_factors=None):
+    """
+    mut_codes: 这里是指数的成分股列表，因为这是一个指数增强策略
+    """
+
     #因子合成（等权）
     for factor_con, factors_to_con in factors_to_concat.items():
         factor_concat(factors_to_con, factor_con) #合成后的因子将保存到特定目录
@@ -682,22 +741,34 @@ def index_enhance_model(method='l', benchmark='000300.SH', start_date=None, end_
     if not os.path.exists(wt_save_path):
         os.mkdir(wt_save_path)
 
-    pctchgnm = get_factor(['PCT_CHG_NM'])['PCT_CHG_NM']
-    index_wt = get_stock_wt_in_index(benchmark) #基准指数权重
+    pctchgnm = get_factor(['PCT_CHG_NM'])['PCT_CHG_NM'] # 股票的下期收益率，NM=next month
+    index_wt = get_stock_wt_in_index(benchmark) #基准指数成分股的权重
+
+    # 基准指数的成分股列表
     mut_codes = index_wt.index.intersection(pctchgnm.index)
 
     data_dict = {} #核心权重优化函数的参数
 
     params = methods[method_name]
+
+    # 需要用到的因子、风险因子、预测因子收益率用到的过去window个月的历史收益率，
+    # half_life用于计算股票权重的衰减系数
     factors, risk_factors, window, half_life = params['factors'], params['risk_factors'], params['window'], params['half_life']
 
+    # 读取所有指数成分股的预测用因子的数据
     factors_dict = {fac: get_factor([fac], mut_codes)[fac] for fac in factors} #读取阿尔法因子的矩阵数据
 
     if method == 'l':
+        # 线性规划
+
+        # 获取所有成分股的风险因子
         risk_fac_data = {fac: get_factor([fac], mut_codes)[fac] for fac in risk_factors} #读取风险因子的矩阵数据
         limit_fac_data = concat_factors_panel(risk_factors, risk_fac_data, mut_codes, ind=True, mktcap=False) #矩阵转换成截面,同时加入行业伪变量
         data_dict.update({'limit_fac_data': limit_fac_data}) #优化函数的约束条件
     elif method == 's':
+        # 分层
+
+        # 分层的话，风险因子就是行业和流通市值
         risk_fac_data = {fac: get_factor([fac], mut_codes)[fac] for fac in ['industry_zx', 'MKT_CAP_FLOAT']}
         data_dict.update(risk_fac_data)
 
@@ -705,12 +776,16 @@ def index_enhance_model(method='l', benchmark='000300.SH', start_date=None, end_
     factors_panel = concat_factors_panel(None, factors_dict, mut_codes)
     # 利用历史因子的收益率预测下一期的期初的股票权重
     est_fac_rets = factor_return_forecast(factors, factors_panel, window, half_life) #因子收益率预测
+
+    # 预测的下一期的因子收益率
     est_fac_rets = est_fac_rets[factors]
     est_stock_rets = get_est_stock_return(factors, factors_panel, est_fac_rets, window, half_life) #计算股票预期收益率
     print('计算股票预期收益率完成...')
 
     mut_dates = index_wt.columns.intersection(est_stock_rets.columns)
     index_wt = index_wt.loc[mut_codes, mut_dates]
+
+    # 过滤出来成分股在指定日期区间的预测收益率
     est_stock_rets = est_stock_rets.loc[mut_codes, mut_dates]
     est_stock_rets.name = 'est_stock_return'
 

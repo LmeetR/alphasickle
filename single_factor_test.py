@@ -112,15 +112,29 @@ def t_ic_test(datpanel, factor_name):
     t_series, fret_series, ic_series = pd.Series(), pd.Series(), pd.Series()
     for date, datdf in datpanel.items(): #每次处理一个截面的数据,正常月频一年12个截面,如一次循环date=2009-01-23,datdf=这月截面数据
         w = np.sqrt(datdf['MKT_CAP_FLOAT']) #流通市值开根号作为回归权重
+
+        # y是所有的股票的收益率
+        # 对于第i个股票，y是第i个股票的下月收益率
+        # 有y(i) = a(i) + beta(i,1)*F(1) + beta(i,2)*F(2) + beta(i,3)*F(3) + ... + beta(i,n)*F(n)
+        # 对于第i个股票，beta(i,1) 是第一个截面股票的因子暴露（就是因子值的标准化之后的值）
+        # F(1）是第一个因子的收益率
+
         y = datdf['PCT_CHG_NM'] #下月股票收益率列表作为因变量
 
         X = datdf[factor_name] #因子值(因子暴露)作为自变量
-        ind_mktcap_matrix = get_ind_mktcap_matrix(datdf)
-        X = pd.concat([X, ind_mktcap_matrix], axis=1) #市值和行业哑变量同时作为自变量,用于行业和市值中性
 
+        # 市值和行业哑变量同时作为自变量,用于行业和市值中性
+        ind_mktcap_matrix = get_ind_mktcap_matrix(datdf)
+        X = pd.concat([X, ind_mktcap_matrix], axis=1)
+
+        # f_rets: 就是截面上股票当期因子暴露
+        # ts: 是判定不是线性回归的tvalue，如果极小，可以拒绝
         ts, f_rets, _ = regress(y, X, w) #线性回归(加权最小二乘法)
 
         t_series[date] = ts[factor_name]
+
+        # 这一步可以看出，增加了市值和行业中性后，这2个系数没用
+        # 但是会影响到其他的因子暴露
         fret_series[date] = f_rets[factor_name]
 
         ic_series[date] = get_ic(datdf, factor_name)

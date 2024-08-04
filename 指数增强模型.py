@@ -19,7 +19,7 @@ def main(method):
         method_name = 'stratified_sample'
     elif method == 'l': #线性规划法
         method_name = 'linear_programming'
-    #要进行大类因子合成的因子
+    #要进行大类因子合成的因子（按照权重）
     factors_to_concat = {
             'mom': ['exp_wgt_return_1m', 'exp_wgt_return_3m', 'exp_wgt_return_6m', 'exp_wgt_return_12m'],
             'liq_barra': ['STOA_barra', 'STOM_barra', 'STOQ_barra'],
@@ -28,6 +28,8 @@ def main(method):
             #'lev': ['BLEV_barra', 'DTOA_barra', 'MLEV_barra'],
             }
     #要进行正交的因子
+    # key是 回归的x
+    # value是回归的y
     factors_ortho = {
             'vol_con_equal':['mom_con_equal', 'liq_barra_con_equal'],
             #'ROE_q': ['EP'],
@@ -53,7 +55,11 @@ def main(method):
     print('开始运行模型...')
     print('*'*80)
     pctchgnm = get_factor(['PCT_CHG_NM'])['PCT_CHG_NM']
+
+    # 指数成分股权重
     index_wt = get_stock_wt_in_index(benchmark)
+
+    #指数的成分股
     mut_codes = index_wt.index.intersection(pctchgnm.index)
     print('开始进行因子合成与正交处理...')
     factor_process(method, factors_to_concat, factors_ortho, index_wt, mut_codes, factors, risk_factors)
